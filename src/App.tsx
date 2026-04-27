@@ -38,6 +38,13 @@ const DIFFICULTY_CONFIG = {
 
 const getInitialSnake = (length: number) => Array.from({length}, (_, i) => ({ x: 10, y: 10 + i }));
 
+const SNAKE_COLORS = [
+  { name: 'MAGENTA', value: '#f0f' },
+  { name: 'LIME', value: '#0f0' },
+  { name: 'YELLOW', value: '#ff0' },
+  { name: 'ORANGE', value: '#f80' },
+];
+
 export default function App() {
   // Audio State
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -46,8 +53,10 @@ export default function App() {
 
   // Game State
   const [difficulty, setDifficulty] = useState<DifficultyLevel>('normal');
+  const [tailColor, setTailColor] = useState<string>('#f0f');
   const [snake, setSnake] = useState(getInitialSnake(DIFFICULTY_CONFIG['normal'].startLength));
-  const [food, setFood] = useState({ x: 15, y: 5 });
+  // Initialize food off-screen, will be set on game start instantly
+  const [food, setFood] = useState({ x: -1, y: -1 });
   const [score, setScore] = useState(0);
   const [highScores, setHighScores] = useState<Record<DifficultyLevel, number>>({ easy: 0, normal: 0, hard: 0 });
   const [gameOver, setGameOver] = useState(false);
@@ -61,23 +70,32 @@ export default function App() {
   const foodRef = useRef(food);
   const gameStartedRef = useRef(gameStarted);
   const isPausedRef = useRef(isPaused);
+  const scoreRef = useRef(score);
+  const tailColorRef = useRef(tailColor);
+  const growthRef = useRef(0);
 
   useEffect(() => { snakeRef.current = snake; }, [snake]);
   useEffect(() => { foodRef.current = food; }, [food]);
   useEffect(() => { gameStartedRef.current = gameStarted; }, [gameStarted]);
   useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+  useEffect(() => { scoreRef.current = score; }, [score]);
+  useEffect(() => { tailColorRef.current = tailColor; }, [tailColor]);
 
   const generateFood = useCallback((currentSnake: {x: number, y: number}[]) => {
-    let valid = false;
-    let newFood = { x: 0, y: 0 };
-    while (!valid) {
-      newFood = {
-        x: Math.floor(Math.random() * GRID_SIZE),
-        y: Math.floor(Math.random() * GRID_SIZE),
-      };
-      valid = !currentSnake.some(s => s.x === newFood.x && s.y === newFood.y);
+    const availableSpaces = [];
+    for (let x = 0; x < GRID_SIZE; x++) {
+      for (let y = 0; y < GRID_SIZE; y++) {
+        if (!currentSnake.some(s => s.x === x && s.y === y)) {
+          availableSpaces.push({ x, y });
+        }
+      }
     }
-    return newFood;
+    
+    // Fallback if somehow grid is full
+    if (availableSpaces.length === 0) return { x: -1, y: -1 };
+
+    const randomIndex = Math.floor(Math.random() * availableSpaces.length);
+    return availableSpaces[randomIndex];
   }, []);
 
   const handleDir = (newDir: {x: number, y: number}) => {
@@ -138,6 +156,8 @@ export default function App() {
     setScore(0);
     dirRef.current = { x: 0, y: -1 };
     lastRenderedDirRef.current = { x: 0, y: -1 };
+    growthRef.current = 0;
+    
     const startSnake = getInitialSnake(DIFFICULTY_CONFIG[difficulty].startLength);
     setSnake(startSnake);
     setFood(generateFood(startSnake));
@@ -154,7 +174,9 @@ export default function App() {
   useEffect(() => {
     if (!gameStarted || gameOver || isPaused) return;
 
-    const interval = setInterval(() => {
+    let timeoutId: NodeJS.Timeout;
+
+    const gameLoop = () => {
       const currSnake = snakeRef.current;
       const head = currSnake[0];
       const dir = dirRef.current;
@@ -178,15 +200,28 @@ export default function App() {
       if (newHead.x === foodRef.current.x && newHead.y === foodRef.current.y) {
         setScore(s => s + 10);
         setFood(generateFood(newSnake));
+        growthRef.current += 2; // Extra growth to make it visible
+      } else if (growthRef.current > 0) {
+        growthRef.current -= 1;
       } else {
         newSnake.pop();
       }
 
       setSnake(newSnake);
-    }, Math.max(40, DIFFICULTY_CONFIG[difficulty].baseSpeed - Math.floor(score / 50) * DIFFICULTY_CONFIG[difficulty].speedBoost));
 
-    return () => clearInterval(interval);
-  }, [gameStarted, gameOver, isPaused, score, generateFood, difficulty]);
+      // Determine next tick speed with random fluctuation +/- 15%
+      const currentScore = scoreRef.current;
+      const baseSpeed = Math.max(40, DIFFICULTY_CONFIG[difficulty].baseSpeed - Math.floor(currentScore / 50) * DIFFICULTY_CONFIG[difficulty].speedBoost);
+      const fluctuation = baseSpeed * 0.15;
+      const dynamicSpeed = baseSpeed + (Math.random() * (fluctuation * 2) - fluctuation);
+
+      timeoutId = setTimeout(gameLoop, dynamicSpeed);
+    };
+
+    timeoutId = setTimeout(gameLoop, DIFFICULTY_CONFIG[difficulty].baseSpeed);
+
+    return () => clearTimeout(timeoutId);
+  }, [gameStarted, gameOver, isPaused, difficulty, generateFood]);
 
   const handleGameOver = () => {
     setGameOver(true);
@@ -251,8 +286,8 @@ export default function App() {
         {/* Header */}
         <header className="w-full flex flex-col md:flex-row md:items-end justify-between gap-4 border-b-4 border-[#f0f] pb-4 px-2">
           <div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-pixel glitch tracking-tighter" data-text="NEON SNAKE">
-              NEON SNAKE
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-pixel glitch tracking-tighter" data-text="SNAKE BEAT">
+              SNAKE BEAT
             </h1>
             <p className="text-[10px] md:text-sm text-[#f0f] mt-4 uppercase tracking-widest bg-[#111] inline-block px-3 py-1 border-l-4 border-[#0ff]">
               STATUS: {gameOver ? 'GAME OVER' : (isPaused ? 'PAUSED' : (gameStarted ? 'PLAYING' : 'READY'))}
@@ -283,7 +318,7 @@ export default function App() {
 
             {!gameStarted && !gameOver && (
               <div className="absolute inset-3 bg-[#000]/95 flex flex-col items-center justify-center z-20 px-4 text-center border-4 border-dashed border-[#f0f] [box-shadow:inset_0_0_40px_rgba(255,0,255,0.2)]">
-                <h2 className="text-3xl md:text-4xl font-pixel text-[#0ff] mb-10 animate-pulse drop-shadow-[0_0_10px_#0ff]">SNAKE</h2>
+                <h2 className="text-3xl md:text-4xl lg:text-5xl font-pixel text-[#0ff] mb-10 animate-pulse drop-shadow-[0_0_10px_#0ff] tracking-tight">SNAKE BEAT</h2>
                 
                 <div className="flex flex-col gap-4 mb-10 w-full max-w-[280px]">
                   {(['easy', 'normal', 'hard'] as DifficultyLevel[]).map(level => (
@@ -299,6 +334,25 @@ export default function App() {
                       {DIFFICULTY_CONFIG[level].name}
                     </button>
                   ))}
+                </div>
+
+                <div className="w-full max-w-[280px] mb-10 border-2 border-[#333] p-3 text-left bg-black text-[#0ff]">
+                  <p className="text-[10px] md:text-xs font-pixel mb-3 text-[#f0f]">&gt; SYS_TAIL_COLOR:</p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {SNAKE_COLORS.map(c => (
+                       <button 
+                         key={c.name}
+                         onClick={(e) => { e.stopPropagation(); setTailColor(c.value); }}
+                         className={`w-8 h-8 md:w-10 md:h-10 border-2 transition-none shadow-[2px_2px_0_0_rgba(255,255,255,0.2)]`}
+                         style={{ 
+                           backgroundColor: c.value,
+                           borderColor: tailColor === c.value ? '#fff' : '#000',
+                           opacity: tailColor === c.value ? 1 : 0.5 
+                         }}
+                         title={c.name}
+                       />
+                    ))}
+                  </div>
                 </div>
 
                 <button
@@ -361,9 +415,10 @@ export default function App() {
                   top: `${(segment.y / GRID_SIZE) * 100}%`,
                   width: `${100 / GRID_SIZE}%`,
                   height: `${100 / GRID_SIZE}%`,
-                  backgroundColor: i === 0 ? '#0ff' : '#f0f',
+                  backgroundColor: i === 0 ? '#0ff' : tailColor,
                   border: '1px solid #111',
                   zIndex: i === 0 ? 10 : 5,
+                  boxShadow: i === 0 ? '0 0 10px #0ff' : `0 0 10px ${tailColor}`,
                 }}
               />
             ))}
